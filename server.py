@@ -38,8 +38,6 @@ def grind(base, owner, return_url, uuid, prefix, suffix):
             print(f"Failed to send error message to return_url: {str(post_error)}")
     
     print("Rust binary executed successfully")
-    os._exit(0)
-
 
 @app.route('/', methods=['POST'])
 def receive():
@@ -108,4 +106,6 @@ def receive():
     return {"status": "0x00", "message": "Request received, processing started"}, 202
     
 
-app.run(host='0.0.0.0', port=8080)
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)

@@ -23,6 +23,8 @@ COPY requirements.txt .
 # Install Python & deps
 RUN python3 -m pip install --no-cache-dir --only-binary=:all: -r requirements.txt --break-system-packages
 
+RUN which gunicorn
+
 EXPOSE 8080
 
 CMD ["gunicorn", "--bind", "0.0.0.0:8080", "server:app"]
