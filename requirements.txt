@@ -1,4 +1,4 @@
 Flask
 base58
 requests
-gunicorn
+waitress
