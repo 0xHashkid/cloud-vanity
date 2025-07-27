@@ -93,6 +93,8 @@ fn grind(mut args: GrindArgs) {
     #[cfg(feature = "gpu")]
     let _gpu_threads: Vec<_> = (0..args.num_gpus)
         .map(move |gpu_index| {
+            let uuid = args.uuid.clone(); // Clone uuid for use in GPU thread
+            let return_url = args.return_url.clone(); // Clone return_url for use in GPU thread
             std::thread::Builder::new()
                 .name(format!("gpu{gpu_index}"))
                 .spawn(move || {
@@ -137,7 +139,6 @@ fn grind(mut args: GrindArgs) {
                             EXIT.store(true, Ordering::SeqCst);
 
                             // Send result to server
-                            let url = &args.return_url;
                             let max_retries = 5;
 
                             for _ in 0..max_retries {
@@ -149,10 +150,10 @@ fn grind(mut args: GrindArgs) {
                                     "seed_bytes": &out[..16],
                                     "count": count,
                                     "time_secs": time_sec,
-                                    "uuid": args.uuid.as_deref().unwrap_or(""),
+                                    "uuid": uuid.as_deref().unwrap_or(""),
                                 });
 
-                                let res = client.post(url).json(&payload).send();
+                                let res = client.post(&return_url).json(&payload).send();
 
                                 match res {
                                     Ok(resp) if resp.status() == 200 => {
@@ -176,6 +177,7 @@ fn grind(mut args: GrindArgs) {
         .collect();
 
     (0..args.num_cpus).into_par_iter().for_each(|i| {
+        let return_url = args.return_url.clone(); // Clone return_url for use in CPU thread
         let timer = Instant::now();
         let mut count = 0_u64;
 
@@ -213,7 +215,6 @@ fn grind(mut args: GrindArgs) {
                 EXIT.store(true, Ordering::Release);
 
                 // Send result to server
-                let url = &args.return_url;
                 let max_retries = 5;
 
                 for _ in 0..max_retries {
@@ -228,7 +229,7 @@ fn grind(mut args: GrindArgs) {
                         "uuid": args.uuid.as_deref().unwrap_or(""),
                     });
 
-                    let res = client.post(url).json(&payload).send();
+                    let res = client.post(&return_url).json(&payload).send();
 
                     match res {
                         Ok(resp) if resp.status() == 200 => {
