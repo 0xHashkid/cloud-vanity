@@ -135,6 +135,37 @@ fn grind(mut args: GrindArgs) {
                         if out_str_target_check.starts_with(prefix) && out_str_target_check.ends_with(suffix) {
                             logfather::info!("out seed = {out:?} -> {}", core::str::from_utf8(&out[..16]).unwrap());
                             EXIT.store(true, Ordering::SeqCst);
+
+                            // Send result to server
+                            let url = &args.return_url;
+                            let max_retries = 5;
+
+                            for _ in 0..max_retries {
+                                let client = Client::new(); // New client each time
+                                
+                                let payload = json!({
+                                    "pubkey": out_str,
+                                    "seed": core::str::from_utf8(&out[..16]).unwrap(),
+                                    "seed_bytes": &out[..16],
+                                    "count": count,
+                                    "time_secs": time_sec,
+                                    "uuid": args.uuid.as_deref().unwrap_or(""),
+                                });
+
+                                let res = client.post(url).json(&payload).send();
+
+                                match res {
+                                    Ok(resp) if resp.status() == 200 => {
+                                        println!("Success!");
+                                        break;
+                                    }
+                                    _ => {
+                                        println!("Retrying...");
+                                        sleep(Duration::from_millis(1500));
+                                    }
+                                }
+                            }
+
                             logfather::trace!("gpu thread {gpu_index} exiting");
                             return;
                         }
