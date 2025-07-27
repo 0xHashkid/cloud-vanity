@@ -90,11 +90,14 @@ fn grind(mut args: GrindArgs) {
     #[cfg(feature = "gpu")]
     logfather::info!("using {} gpus", args.num_gpus);
 
+    let uuid = args.uuid.clone(); // Clone uuid for use in both GPU and CPU threads
+    let return_url = args.return_url.clone(); // Clone return_url for use in both GPU and CPU threads
+
     #[cfg(feature = "gpu")]
     let _gpu_threads: Vec<_> = (0..args.num_gpus)
         .map(move |gpu_index| {
-            let uuid = args.uuid.clone(); // Clone uuid for use in GPU thread
-            let return_url = args.return_url.clone(); // Clone return_url for use in GPU thread
+            let uuid = uuid.clone(); // Clone uuid for use in GPU thread
+            let return_url = return_url.clone(); // Clone return_url for use in GPU thread
             std::thread::Builder::new()
                 .name(format!("gpu{gpu_index}"))
                 .spawn(move || {
@@ -177,7 +180,8 @@ fn grind(mut args: GrindArgs) {
         .collect();
 
     (0..args.num_cpus).into_par_iter().for_each(|i| {
-        let return_url = args.return_url.clone(); // Clone return_url for use in CPU thread
+        let uuid = uuid.clone(); // Clone uuid for use in CPU thread
+        let return_url = return_url.clone(); // Clone return_url for use in CPU thread
         let timer = Instant::now();
         let mut count = 0_u64;
 
@@ -226,7 +230,7 @@ fn grind(mut args: GrindArgs) {
                         "seed_bytes": &seed,
                         "count": count,
                         "time_secs": time_secs,
-                        "uuid": args.uuid.as_deref().unwrap_or(""),
+                        "uuid": uuid.as_deref().unwrap_or(""),
                     });
 
                     let res = client.post(&return_url).json(&payload).send();
