@@ -5,22 +5,10 @@ use rand::{distributions::Alphanumeric, Rng};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use sha2::{Digest, Sha256};
 use solana_pubkey::Pubkey;
-use solana_rpc_client::rpc_client::RpcClient;
-use solana_sdk::{
-    bpf_loader_upgradeable::{self, get_program_data_address, UpgradeableLoaderState},
-    instruction::{AccountMeta, Instruction},
-    loader_upgradeable_instruction::UpgradeableLoaderInstruction,
-    signature::read_keypair_file,
-    signer::Signer,
-    system_instruction, system_program, sysvar,
-    transaction::Transaction,
-};
-
 use reqwest::blocking::Client;
 use std::thread::sleep;
 use std::time::Duration;
 use serde_json::json;
-
 use std::{
     array,
     path::PathBuf,
@@ -28,12 +16,6 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
     time::Instant,
 };
-
-#[derive(Debug, Parser)]
-pub enum Command {
-    Grind(GrindArgs),
-    Deploy(DeployArgs),
-}
 
 #[derive(Debug, Parser)]
 pub struct GrindArgs {
@@ -77,151 +59,14 @@ pub struct GrindArgs {
     pub num_cpus: u32,
 }
 
-#[derive(Debug, Parser)]
-pub struct DeployArgs {
-    /// The keypair that will be the signer for the CreateAccountWithSeed instruction
-    #[clap(long)]
-    pub base: PathBuf,
-
-    /// The keypair that will be the signer for the CreateAccountWithSeed instruction
-    #[clap(long, default_value = "https://api.mainnet-beta.solana.com")]
-    pub rpc: String,
-
-    /// The account owner, e.g. BPFLoaderUpgradeab1e11111111111111111111111 or TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
-    #[clap(long, value_parser = parse_pubkey)]
-    pub owner: Pubkey,
-
-    /// Buffer where the program has been written (via solana program write-buffer)
-    #[clap(long, value_parser = parse_pubkey)]
-    pub buffer: Pubkey,
-
-    /// Path to keypair that will pay for deploy. when this is None, base is used as payer
-    #[clap(long)]
-    pub payer: Option<PathBuf>,
-
-    /// Seed grinded via grind
-    #[clap(long)]
-    pub seed: String,
-
-    /// Program authority (default is (payer) keypair's pubkey)
-    #[clap(long)]
-    pub authority: Option<Pubkey>,
-
-    /// Compute unit price
-    #[clap(long)]
-    pub compute_unit_price: Option<u64>,
-
-    /// Optional log file
-    #[clap(long)]
-    pub logfile: Option<String>,
-}
-
 static EXIT: AtomicBool = AtomicBool::new(false);
 
 fn main() {
     rayon::ThreadPoolBuilder::new().build_global().unwrap();
 
     // Parse command line arguments
-    let command = Command::parse();
-    match command {
-        Command::Grind(args) => {
-            grind(args);
-        }
-
-        Command::Deploy(args) => {
-            deploy(args);
-        }
-    }
-}
-
-fn deploy(args: DeployArgs) {
-    // Load base and payer keypair
-    let base_keypair = read_keypair_file(&args.base).expect("failed to read base keypair");
-    let payer_keypair = args
-        .payer
-        .as_ref()
-        .map(|payer| read_keypair_file(payer).expect("failed to read payer keypair"))
-        .unwrap_or(base_keypair.insecure_clone());
-    let authority = args.authority.unwrap_or_else(|| payer_keypair.pubkey());
-
-    // Target
-    let target = Pubkey::create_with_seed(&base_keypair.pubkey(), &args.seed, &args.owner).unwrap();
-    // Fetch rent
-    let rpc_client = RpcClient::new(args.rpc);
-    // this is such a dumb way to do this
-    let buffer_len = rpc_client.get_account_data(&args.buffer).unwrap().len();
-    // I forgot the header len so let's just add 64 for now lol
-    let rent = rpc_client
-        .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program())
-        .expect("failed to fetch rent");
-
-    // Create account with seed
-    let instructions = deploy_with_max_program_len_with_seed(
-        &payer_keypair.pubkey(),
-        &target,
-        &args.buffer,
-        &authority,
-        rent,
-        64 + buffer_len,
-        &base_keypair.pubkey(),
-        &args.seed,
-    );
-    // Transaction
-    let blockhash = rpc_client.get_latest_blockhash().unwrap();
-    let signers = if args.payer.is_none() {
-        vec![&base_keypair]
-    } else {
-        vec![&base_keypair, &payer_keypair]
-    };
-    let transaction = Transaction::new_signed_with_payer(
-        &instructions,
-        Some(&payer_keypair.pubkey()),
-        &signers,
-        blockhash,
-    );
-
-    let sig = rpc_client
-        .send_and_confirm_transaction(&transaction)
-        .unwrap();
-    println!("Deployed {target}: {sig}");
-}
-
-pub fn deploy_with_max_program_len_with_seed(
-    payer_address: &Pubkey,
-    program_address: &Pubkey,
-    buffer_address: &Pubkey,
-    upgrade_authority_address: &Pubkey,
-    program_lamports: u64,
-    max_data_len: usize,
-    base: &Pubkey,
-    seed: &str,
-) -> [Instruction; 2] {
-    let programdata_address = get_program_data_address(program_address);
-    [
-        system_instruction::create_account_with_seed(
-            payer_address,
-            program_address,
-            base,
-            seed,
-            program_lamports,
-            UpgradeableLoaderState::size_of_program() as u64,
-            &bpf_loader_upgradeable::id(),
-        ),
-        Instruction::new_with_bincode(
-            bpf_loader_upgradeable::id(),
-            &UpgradeableLoaderInstruction::DeployWithMaxDataLen { max_data_len },
-            vec![
-                AccountMeta::new(*payer_address, true),
-                AccountMeta::new(programdata_address, false),
-                AccountMeta::new(*program_address, false),
-                AccountMeta::new(*buffer_address, false),
-                AccountMeta::new_readonly(sysvar::rent::id(), false),
-                AccountMeta::new_readonly(sysvar::clock::id(), false),
-                AccountMeta::new_readonly(system_program::id(), false),
-                AccountMeta::new_readonly(*upgrade_authority_address, true),
-            ],
-        ),
-    ]
+    let args = GrindArgs::parse();
+    grind(args);
 }
 
 fn grind(mut args: GrindArgs) {
